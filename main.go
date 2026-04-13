@@ -22,6 +22,8 @@ import (
 	"tailscale.com/ipn"
 )
 
+var version = "0.0.0"
+
 const (
 	stateActive  = "active"
 	stateStandby = "standby"
@@ -29,6 +31,7 @@ const (
 )
 
 func main() {
+	showVersion := flag.Bool("version", false, "Print version and exit")
 	verbose := flag.Bool("verbose", false, "Enable debug logging")
 	service := flag.String("service", envOrDefault("TS_SERVICE", "svc:ceph-mgr"), "Tailscale service name")
 	upstream := flag.String("upstream", envOrDefault("TS_UPSTREAM", "127.0.0.1:8080"), "Local backend address")
@@ -42,6 +45,11 @@ func main() {
 	}
 	interval := flag.Duration("interval", defaultInterval, "Poll interval")
 	flag.Parse()
+
+	if *showVersion || (flag.NArg() > 0 && flag.Arg(0) == "version") {
+		fmt.Println(version)
+		return
+	}
 
 	if *verbose {
 		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))

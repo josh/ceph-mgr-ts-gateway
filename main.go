@@ -132,6 +132,9 @@ func registerServe(ctx context.Context, lc *local.Client, service, httpsPort, up
 	if err != nil {
 		return fmt.Errorf("invalid https port %q: %w", httpsPort, err)
 	}
+	if port == 0 {
+		return fmt.Errorf("invalid https port %q: must be 1-65535", httpsPort)
+	}
 
 	proxyURL, err := ipn.ExpandProxyTargetValue(upstream, []string{"http", "https", "https+insecure"}, "http")
 	if err != nil {

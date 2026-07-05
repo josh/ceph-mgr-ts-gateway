@@ -126,6 +126,9 @@ func registerServe(ctx context.Context, lc *local.Client, service, httpsPort, up
 	if err != nil {
 		return fmt.Errorf("get status: %w", err)
 	}
+	if st.CurrentTailnet == nil {
+		return fmt.Errorf("tailscale is not connected to a tailnet (backend state: %s)", st.BackendState)
+	}
 	mds := st.CurrentTailnet.MagicDNSSuffix
 
 	port, err := strconv.ParseUint(httpsPort, 10, 16)

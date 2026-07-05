@@ -55,6 +55,11 @@ func main() {
 		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	}
 
+	if *interval <= 0 {
+		fmt.Fprintf(os.Stderr, "invalid interval %s: must be positive\n", *interval)
+		os.Exit(1)
+	}
+
 	if *cephAsok == "" {
 		hostname, err := os.Hostname()
 		if err != nil {

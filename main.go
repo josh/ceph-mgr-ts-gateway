@@ -201,21 +201,24 @@ func poll(ctx context.Context, lc *local.Client, asokPath, service, lastState st
 	case stateActive:
 		slog.Info("mgr is active, advertising", "service", service)
 		if err := setServiceAdvertised(ctx, lc, service, true); err != nil {
-			slog.Error("failed to advertise", "error", err)
+			slog.Error("failed to advertise, will retry", "error", err)
+			return lastState
 		}
 		sdNotify("STATUS=Active — advertising " + service)
 
 	case stateStandby:
 		slog.Info("mgr is standby, draining", "service", service)
 		if err := setServiceAdvertised(ctx, lc, service, false); err != nil {
-			slog.Error("failed to drain", "error", err)
+			slog.Error("failed to drain, will retry", "error", err)
+			return lastState
 		}
 		sdNotify("STATUS=Standby — draining " + service)
 
 	case stateError:
 		slog.Warn("mgr check failed, draining", "service", service, "error", err)
 		if err := setServiceAdvertised(ctx, lc, service, false); err != nil {
-			slog.Error("failed to drain", "error", err)
+			slog.Error("failed to drain, will retry", "error", err)
+			return lastState
 		}
 		sdNotify("STATUS=Error — draining " + service)
 	}

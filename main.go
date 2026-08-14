@@ -23,7 +23,7 @@ import (
 	"tailscale.com/tailcfg"
 )
 
-var version = "0.2.1"
+var version = "0.2.2"
 
 const (
 	stateActive  = "active"

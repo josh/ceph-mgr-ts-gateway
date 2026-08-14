@@ -22,7 +22,7 @@ import (
 	"tailscale.com/ipn"
 )
 
-var version = "0.2.0"
+var version = "0.2.1"
 
 const (
 	stateActive  = "active"

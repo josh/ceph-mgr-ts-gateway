@@ -20,6 +20,7 @@ import (
 
 	"tailscale.com/client/local"
 	"tailscale.com/ipn"
+	"tailscale.com/tailcfg"
 )
 
 var version = "0.2.1"
@@ -145,6 +146,10 @@ func registerServe(ctx context.Context, lc *local.Client, service, httpsPort, up
 	}
 
 	handler := &ipn.HTTPHandler{Proxy: proxyURL}
+	// Drop any stale entry from a previous run; SetWebHandler only adds.
+	if svcName := tailcfg.AsServiceName(service); svcName != "" {
+		delete(sc.Services, svcName)
+	}
 	sc.SetWebHandler(handler, service, uint16(port), "/", true, mds)
 
 	if err := lc.SetServeConfig(ctx, sc); err != nil {

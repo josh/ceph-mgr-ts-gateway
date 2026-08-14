@@ -20,6 +20,7 @@ import (
 
 	"tailscale.com/client/local"
 	"tailscale.com/ipn"
+	"tailscale.com/tailcfg"
 )
 
 var version = "0.2.1"
@@ -66,6 +67,11 @@ func main() {
 
 	if *interval <= 0 {
 		fmt.Fprintf(os.Stderr, "invalid interval %s: must be positive\n", *interval)
+		os.Exit(1)
+	}
+
+	if tailcfg.AsServiceName(*service) == "" {
+		fmt.Fprintf(os.Stderr, "invalid service name %q: must be like %q\n", *service, "svc:ceph-mgr")
 		os.Exit(1)
 	}
 

@@ -38,17 +38,26 @@ func main() {
 	httpsPort := flag.String("https-port", envOrDefault("TS_HTTPS_PORT", "443"), "HTTPS listen port")
 	tsSocket := flag.String("socket", envOrDefault("TS_SOCKET", ""), "Tailscale daemon socket path")
 	cephAsok := flag.String("ceph-asok", envOrDefault("CEPH_ASOK", ""), "Ceph MGR admin socket path")
-	defaultInterval, err := envDurationOrDefault("POLL_INTERVAL", 30*time.Second)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+	defaultInterval, intervalEnvErr := envDurationOrDefault("POLL_INTERVAL", 30*time.Second)
 	interval := flag.Duration("interval", defaultInterval, "Poll interval")
 	flag.Parse()
 
 	if *showVersion || (flag.NArg() > 0 && flag.Arg(0) == "version") {
 		fmt.Println(version)
 		return
+	}
+
+	if intervalEnvErr != nil {
+		intervalFlagSet := false
+		flag.Visit(func(f *flag.Flag) {
+			if f.Name == "interval" {
+				intervalFlagSet = true
+			}
+		})
+		if !intervalFlagSet {
+			fmt.Fprintln(os.Stderr, intervalEnvErr)
+			os.Exit(1)
+		}
 	}
 
 	if *verbose {
@@ -323,7 +332,7 @@ func envDurationOrDefault(key string, fallback time.Duration) (time.Duration, er
 	}
 	d, err := time.ParseDuration(v)
 	if err != nil {
-		return 0, fmt.Errorf("invalid %s=%q: %w", key, v, err)
+		return fallback, fmt.Errorf("invalid %s=%q: %w", key, v, err)
 	}
 	return d, nil
 }

@@ -17,10 +17,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
-	"tailscale.com/client/local"
-	"tailscale.com/ipn"
-	"tailscale.com/tailcfg"
 )
 
 var version = "0.2.5"
@@ -70,7 +66,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if tailcfg.AsServiceName(*service) == "" {
+	if !validServiceName(*service) {
 		fmt.Fprintf(os.Stderr, "invalid service name %q: must be like %q\n", *service, "svc:ceph-mgr")
 		os.Exit(1)
 	}
@@ -84,10 +80,7 @@ func main() {
 		*cephAsok = fmt.Sprintf("/run/ceph/ceph-mgr.%s.asok", hostname)
 	}
 
-	var lc local.Client
-	if *tsSocket != "" {
-		lc.Socket = *tsSocket
-	}
+	lc := newTSClient(*tsSocket)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
@@ -100,7 +93,7 @@ func main() {
 		"interval", *interval,
 	)
 
-	if err := registerServe(ctx, &lc, *service, *httpsPort, *upstream); err != nil {
+	if err := registerServe(ctx, lc, *service, *httpsPort, *upstream); err != nil {
 		slog.Error("failed to register tailscale serve", "error", err)
 		os.Exit(1)
 	}
@@ -111,7 +104,7 @@ func main() {
 	defer ticker.Stop()
 
 	var lastState string
-	lastState = poll(ctx, &lc, *cephAsok, *service, lastState)
+	lastState = poll(ctx, lc, *cephAsok, *service, lastState)
 
 	for {
 		select {
@@ -119,32 +112,20 @@ func main() {
 			slog.Info("shutting down, draining service")
 			sdNotify("STOPPING=1")
 			drainCtx, drainCancel := context.WithTimeout(context.Background(), 10*time.Second)
-			_ = setServiceAdvertised(drainCtx, &lc, *service, false)
+			_ = setServiceAdvertised(drainCtx, lc, *service, false)
 			drainCancel()
 			return
 		case <-ticker.C:
-			lastState = poll(ctx, &lc, *cephAsok, *service, lastState)
+			lastState = poll(ctx, lc, *cephAsok, *service, lastState)
 		}
 	}
 }
 
-func registerServe(ctx context.Context, lc *local.Client, service, httpsPort, upstream string) error {
-	sc, err := lc.GetServeConfig(ctx)
-	if err != nil {
-		return fmt.Errorf("get serve config: %w", err)
-	}
-	if sc == nil {
-		sc = new(ipn.ServeConfig)
-	}
-
-	st, err := lc.StatusWithoutPeers(ctx)
+func registerServe(ctx context.Context, lc *tsClient, service, httpsPort, upstream string) error {
+	mds, err := lc.magicDNSSuffix(ctx)
 	if err != nil {
 		return fmt.Errorf("get status: %w", err)
 	}
-	if st.CurrentTailnet == nil {
-		return fmt.Errorf("tailscale is not connected to a tailnet (backend state: %s)", st.BackendState)
-	}
-	mds := st.CurrentTailnet.MagicDNSSuffix
 
 	port, err := strconv.ParseUint(httpsPort, 10, 16)
 	if err != nil {
@@ -154,20 +135,13 @@ func registerServe(ctx context.Context, lc *local.Client, service, httpsPort, up
 		return fmt.Errorf("invalid https port %q: must be 1-65535", httpsPort)
 	}
 
-	proxyURL, err := ipn.ExpandProxyTargetValue(upstream, []string{"http", "https", "https+insecure"}, "http")
+	proxyURL, err := expandProxyTarget(upstream)
 	if err != nil {
 		return fmt.Errorf("invalid upstream %q: %w", upstream, err)
 	}
 
-	handler := &ipn.HTTPHandler{Proxy: proxyURL}
-	// Drop any stale entry from a previous run; SetWebHandler only adds.
-	if svcName := tailcfg.AsServiceName(service); svcName != "" {
-		delete(sc.Services, svcName)
-	}
-	sc.SetWebHandler(handler, service, uint16(port), "/", true, mds)
-
-	if err := lc.SetServeConfig(ctx, sc); err != nil {
-		return fmt.Errorf("set serve config: %w", err)
+	if err := lc.setServiceProxy(ctx, service, mds, uint16(port), proxyURL); err != nil {
+		return err
 	}
 
 	if err := setServiceAdvertised(ctx, lc, service, false); err != nil {
@@ -178,35 +152,29 @@ func registerServe(ctx context.Context, lc *local.Client, service, httpsPort, up
 	return nil
 }
 
-func setServiceAdvertised(ctx context.Context, lc *local.Client, service string, advertise bool) error {
-	prefs, err := lc.GetPrefs(ctx)
+func setServiceAdvertised(ctx context.Context, lc *tsClient, service string, advertise bool) error {
+	current, err := lc.advertisedServices(ctx)
 	if err != nil {
 		return fmt.Errorf("get prefs: %w", err)
 	}
 
 	var updated []string
 	if advertise {
-		if slices.Contains(prefs.AdvertiseServices, service) {
+		if slices.Contains(current, service) {
 			return nil
 		}
-		updated = append(prefs.AdvertiseServices, service)
+		updated = append(current, service)
 	} else {
-		updated = slices.DeleteFunc(slices.Clone(prefs.AdvertiseServices), func(s string) bool { return s == service })
-		if len(updated) == len(prefs.AdvertiseServices) {
+		updated = slices.DeleteFunc(slices.Clone(current), func(s string) bool { return s == service })
+		if len(updated) == len(current) {
 			return nil
 		}
 	}
 
-	_, err = lc.EditPrefs(ctx, &ipn.MaskedPrefs{
-		AdvertiseServicesSet: true,
-		Prefs: ipn.Prefs{
-			AdvertiseServices: updated,
-		},
-	})
-	return err
+	return lc.setAdvertisedServices(ctx, updated)
 }
 
-func poll(ctx context.Context, lc *local.Client, asokPath, service, lastState string) string {
+func poll(ctx context.Context, lc *tsClient, asokPath, service, lastState string) string {
 	state, err := checkMgrStatus(ctx, asokPath)
 	if err != nil {
 		state = stateError
